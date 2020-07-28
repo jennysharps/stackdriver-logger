@@ -1,8 +1,8 @@
 [package]
-name = "stackdriver_logger"
+name = "stackdriver_logger_kv"
 version = "0.7.0"
 description = "A logger for Google's Stackdriver with a cli-friendly fallback for local development"
-authors = ["Kamek <b.kamek@gmail.com>"]
+authors = ["Kamek <b.kamek@gmail.com>", "Jenny <jsharps85@gmail.com>"]
 license = "MIT/Apache-2.0"
 categories = ["development-tools::debugging"]
 keywords = ["log", "logging", "cloud", "google", "stackdriver"]
