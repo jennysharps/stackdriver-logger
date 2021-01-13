@@ -119,13 +119,7 @@ pub(crate) fn try_init(
         {
             use std::io::Write;
             let mut builder = env_logger::Builder::new();
-            builder.format(move |f, record| {
-                writeln!(
-                    f,
-                    "{}",
-                    format_record_pretty(record)
-                )
-            });
+            builder.format(move |f, record| writeln!(f, "{}", format_record_pretty(record)));
         }
 
         pretty_env_logger::try_init()
@@ -223,7 +217,7 @@ fn format_record(
     {
         let mut json_payload = json_payload;
         let mut custom_fields = CustomFields::new();
-        if let Ok(_) = record.key_values().visit(&mut custom_fields) {
+        if record.key_values().visit(&mut custom_fields).is_ok() {
             for (key, val) in custom_fields.inner().iter() {
                 json_payload[key.as_str()] = Value::String(val.to_string());
             }
@@ -232,20 +226,22 @@ fn format_record(
     }
 }
 
-#[cfg(all(feature = "pretty_env_logger", feature = "customfields", debug_assertions))]
-fn format_record_pretty(
-    record: &log::Record<'_>
-) -> String {    
+#[cfg(all(
+    feature = "pretty_env_logger",
+    feature = "customfields",
+    debug_assertions
+))]
+fn format_record_pretty(record: &log::Record<'_>) -> String {
     let mut message = format!("{}", record.args());
     let mut custom_fields = CustomFields::new();
     let mut kv_message_parts = vec![];
-    if let Ok(_) = record.key_values().visit(&mut custom_fields) {
+    if record.key_values().visit(&mut custom_fields).is_ok() {
         for (key, val) in custom_fields.inner().iter() {
             kv_message_parts.push(format!("{}={}", key, val));
         }
     }
 
-    if kv_message_parts.len() > 0 {
+    if !kv_message_parts.is_empty() {
         kv_message_parts.sort();
         message = format!("{} {}", message, kv_message_parts.join(", "))
     }
