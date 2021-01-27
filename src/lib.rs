@@ -19,6 +19,13 @@ use log::kv;
 #[cfg(feature = "customfields")]
 use std::collections::HashMap;
 
+
+#[cfg(all(feature = "pretty_env_logger", feature = "customfields"))]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[cfg(all(feature = "pretty_env_logger", feature = "customfields"))]
+use env_logger::fmt::{Color, Style, StyledValue};
+
 // Wrap Level from the log crate so we can implement standard traits for it
 struct LogLevel(Level);
 
@@ -113,16 +120,65 @@ pub(crate) fn try_init(
     service: Option<Service>,
     report_location: bool,
 ) -> Result<(), SetLoggerError> {
+
     #[cfg(all(feature = "pretty_env_logger", debug_assertions))]
     {
-        #[cfg(feature = "customfields")]
-        {
+        #[cfg(feature="customfields")] {
+            // pretty_env_logger doesn't offer any format hooks or methods for
+            // format extension; this code copies pretty_env_logger::try_init()
+            // as a base, and extends it with custom fields
             use std::io::Write;
-            let mut builder = env_logger::Builder::new();
-            builder.format(move |f, record| writeln!(f, "{}", format_record_pretty(record)));
+            let mut builder = pretty_env_logger::formatted_builder();
+
+            builder.format(move |f, record| {
+                // TODO: move this business logic into format_record_pretty if possible
+                let target = record.target();
+                let max_width = max_target_width(target);
+        
+                let mut style = f.style();
+                let level = colored_level(&mut style, record.level());
+        
+                let mut style = f.style();
+                let target = style.set_bold(true).value(Padded {
+                    value: target,
+                    width: max_width,
+                });
+
+                let mut custom_fields = CustomFields::new();
+                let mut kv_message_parts = vec![];
+                if record.key_values().visit(&mut custom_fields).is_ok() {
+                    for (key, val) in custom_fields.inner().iter() {
+                        kv_message_parts.push(format!("{}={}", key, val));
+                    }
+                }
+
+                let kv_message = if !kv_message_parts.is_empty() {
+                    kv_message_parts.sort();
+                    format!(" {{{}}}", kv_message_parts.join(", "))
+                } else {
+                    String::new()
+                };
+
+                writeln!(
+                    f,
+                    "{} {} > {}{}",
+                    level,
+                    target,
+                    record.args(),
+                    kv_message,
+                )
+            });
+
+            if let Ok(s) = std::env::var("RUST_LOG") {
+                builder.parse_filters(&s);
+            }
+
+            builder.try_init()
         }
 
-        pretty_env_logger::try_init()
+        #[cfg(not(feature = "customfields"))] {
+            pretty_env_logger::try_init()
+        }
     }
 
     #[cfg(not(all(feature = "pretty_env_logger", debug_assertions)))]
@@ -226,27 +282,43 @@ fn format_record(
     }
 }
 
-#[cfg(all(
-    feature = "pretty_env_logger",
-    feature = "customfields",
-    debug_assertions
-))]
-fn format_record_pretty(record: &log::Record<'_>) -> String {
-    let mut message = format!("{}", record.args());
-    let mut custom_fields = CustomFields::new();
-    let mut kv_message_parts = vec![];
-    if record.key_values().visit(&mut custom_fields).is_ok() {
-        for (key, val) in custom_fields.inner().iter() {
-            kv_message_parts.push(format!("{}={}", key, val));
-        }
-    }
+#[cfg(feature = "pretty_env_logger")]
+struct Padded<T> {
+    value: T,
+    width: usize,
+}
 
-    if !kv_message_parts.is_empty() {
-        kv_message_parts.sort();
-        message = format!("{} {}", message, kv_message_parts.join(", "))
+#[cfg(feature = "pretty_env_logger")]
+impl<T: fmt::Display> fmt::Display for Padded<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{: <width$}", self.value, width=self.width)
     }
+}
 
-    message
+
+#[cfg(all(feature = "pretty_env_logger", feature = "customfields"))]
+static MAX_MODULE_WIDTH: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(all(feature = "pretty_env_logger", feature = "customfields"))]
+fn max_target_width(target: &str) -> usize {
+    let max_width = MAX_MODULE_WIDTH.load(Ordering::Relaxed);
+    if max_width < target.len() {
+        MAX_MODULE_WIDTH.store(target.len(), Ordering::Relaxed);
+        target.len()
+    } else {
+        max_width
+    }
+}
+
+#[cfg(all(feature = "pretty_env_logger", feature = "customfields"))]
+fn colored_level<'a>(style: &'a mut Style, level: Level) -> StyledValue<'a, &'static str> {
+    match level {
+        Level::Trace => style.set_color(Color::Magenta).value("TRACE"),
+        Level::Debug => style.set_color(Color::Blue).value("DEBUG"),
+        Level::Info => style.set_color(Color::Green).value("INFO "),
+        Level::Warn => style.set_color(Color::Yellow).value("WARN "),
+        Level::Error => style.set_color(Color::Red).value("ERROR"),
+    }
 }
 
 #[cfg(test)]
